@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reverse Solver — playtest paneli</title>
+<style>
+  :root{--bg:#0e2a2e;--card:#14383d;--line:#2a5a60;--txt:#e8f2f1;--mut:#8fb2b3;
+        --ok:#5ed6bd;--warn:#f0a742;--bad:#e8674c}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);
+    font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    padding:18px;max-width:1100px;margin:0 auto;font-size:14px}
+  h1{font-size:20px;margin-bottom:4px}
+  h2{font-size:14px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);
+     margin:26px 0 10px;font-weight:600}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+  .cfg{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+  input{flex:1;min-width:200px;padding:11px;border-radius:9px;border:1px solid var(--line);
+    background:#0b2226;color:var(--txt);font-size:14px;font-family:inherit}
+  button{padding:11px 18px;border:none;border-radius:9px;background:var(--warn);
+    color:#33220a;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit}
+  button.ghost{background:transparent;color:var(--mut);border:1px solid var(--line)}
+  .cards{display:flex;gap:10px;flex-wrap:wrap}
+  .kpi{flex:1;min-width:130px;background:var(--card);border:1px solid var(--line);
+    border-radius:12px;padding:14px}
+  .kpi b{display:block;font-size:26px;font-variant-numeric:tabular-nums;line-height:1.2}
+  .kpi span{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--mut)}
+  table{width:100%;border-collapse:collapse;font-size:13px;
+    background:var(--card);border-radius:12px;overflow:hidden}
+  th,td{padding:8px 9px;text-align:right;border-bottom:1px solid rgba(255,255,255,.07);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  th{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);
+     text-align:right;font-weight:600}
+  th:first-child,td:first-child{text-align:left}
+  tr.hot td{background:rgba(232,103,76,.16)}
+  tr.cold td{background:rgba(94,214,189,.10)}
+  .bar{height:7px;border-radius:4px;background:rgba(255,255,255,.1);overflow:hidden;min-width:52px}
+  .bar i{display:block;height:100%;background:var(--ok)}
+  .note{color:var(--mut);font-size:12px;line-height:1.6;margin-top:8px}
+  svg{background:var(--card);border:1px solid var(--line);border-radius:12px;width:100%;height:auto}
+  .err{background:rgba(232,103,76,.18);border:1px solid var(--bad);border-radius:10px;
+    padding:12px;margin-bottom:14px;font-size:13px}
+</style>
+</head>
+<body>
+
+<h1>Reverse Solver playtest paneli</h1>
+<div class="sub">Supabase'deki <code>plays</code> tablosunu okur. Anahtar tarayıcıda saklanır, hiçbir yere gönderilmez.</div>
+
+<div class="cfg">
+  <input id="url" placeholder="https://xxxx.supabase.co">
+  <input id="key" placeholder="anon public key">
+  <button id="go">Yükle</button>
+  <button class="ghost" id="csv">CSV indir</button>
+</div>
+<div id="err"></div>
+
+<div class="cards" id="kpis"></div>
+
+<h2>Level bazında</h2>
+<table id="lvTable"></table>
+<div class="note">
+  <b>Geçme</b> = o levele giren oyuncuların yüzde kaçı bitirdi.
+  <b>Deneme</b> = geçen oyuncu başına ortalama kaç deneme.
+  <b>Kalan</b> = kazananların saatinde ortalama kaç saniye kaldı; sıfıra yakınsa süre dar demektir.
+  Kırmızı satır: geçme oranı %50 altında ya da 2.5'tan fazla deneme gerekmiş.
+</div>
+
+<h2>Ölçülen yük, gerçek süreyle uyuşuyor mu</h2>
+<svg id="scatter" viewBox="0 0 800 380"></svg>
+<div class="note" id="corr"></div>
+
+<h2>Oyuncular</h2>
+<table id="plTable"></table>
+
+<script>
+/* The whole point of this page: put the difficulty number the generator
+   predicted next to what players actually did, so the formula behind the
+   40 level curve can be corrected instead of guessed at. */
+
+const $ = id => document.getElementById(id);
+let ROWS = [];
+
+$('url').value = localStorage.getItem('rs_url') || '';
+$('key').value = localStorage.getItem('rs_key') || '';
+
+$('go').onclick = load;
+if ($('url').value && $('key').value) load();
+
+async function load(){
+  const url = $('url').value.trim().replace(/\/+$/,'').replace(/\/rest\/v1$/,''),
+        key = $('key').value.trim();
+  if (!url || !key) return;
+  localStorage.setItem('rs_url', url); localStorage.setItem('rs_key', key);
+  $('err').innerHTML = '';
+  try {
+    const r = await fetch(url + '/rest/v1/plays?select=*&order=id.asc&limit=5000',
+      { headers:{ apikey:key, Authorization:'Bearer '+key } });
+    if (!r.ok) throw new Error(r.status + ' ' + await r.text());
+    ROWS = await r.json();
+    render();
+  } catch(e){
+    $('err').innerHTML = '<div class="err">Okunamadi: ' + e.message +
+      '<br>Tabloda anon icin SELECT izni acik mi kontrol et.</div>';
+  }
+}
+
+const med = a => { if(!a.length) return 0; const s=[...a].sort((x,y)=>x-y);
+  const m=s.length>>1; return s.length%2 ? s[m] : Math.round((s[m-1]+s[m])/2); };
+const avg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0;
+
+function render(){
+  const players = new Set(ROWS.map(r => r.player));
+  const wonLv = new Set(ROWS.filter(r => r.result==='win').map(r => r.player+'|'+r.lv));
+
+  $('kpis').innerHTML = [
+    ['Oyuncu', players.size],
+    ['Deneme', ROWS.length],
+    ['Gecilen bolum', wonLv.size],
+    ['Toplam sure', Math.round(ROWS.reduce((a,r)=>a+r.dur,0)/60) + ' dk'],
+    ['En uzak bolum', Math.max(0, ...ROWS.map(r => r.lv))]
+  ].map(([k,v]) => `<div class="kpi"><b>${v}</b><span>${k}</span></div>`).join('');
+
+  // ---- per level -----------------------------------------------------------
+  const lvs = {};
+  for (const r of ROWS){
+    const a = lvs[r.lv] = lvs[r.lv] || { load:r.load, players:new Set(), winners:new Set(),
+      tries:{}, dur:[], left:[], jams:[], fail:{time:0,bomb:0,quit:0},
+      b:{scissors:0,wand:0,hammer:0,clock:0} };
+    a.players.add(r.player);
+    a.tries[r.player] = Math.max(a.tries[r.player]||0, r.attempt);
+    a.jams.push(r.jams);
+    if (r.result === 'win'){ a.winners.add(r.player); a.dur.push(r.dur); a.left.push(r.left_s); }
+    else a.fail[r.result] = (a.fail[r.result]||0) + 1;
+    for (const k in a.b) a.b[k] += r['b_'+k] || 0;
+  }
+
+  let html = `<tr><th>Lv</th><th>Yuk</th><th>Oyuncu</th><th>Gecme</th><th></th>
+    <th>Deneme</th><th>Sure</th><th>Kalan</th><th>Takilma</th>
+    <th>Sure doldu</th><th>Bomba</th><th>Birakti</th>
+    <th>Makas</th><th>Degnek</th><th>Cekic</th><th>Saat</th></tr>`;
+  const pts = [];
+  Object.keys(lvs).sort((a,b)=>a-b).forEach(lv => {
+    const a = lvs[lv];
+    const rate = a.players.size ? a.winners.size / a.players.size : 0;
+    const tries = avg([...a.winners].map(p => a.tries[p] || 1));
+    const hot = rate < .5 || tries > 2.5;
+    const cold = rate === 1 && tries <= 1.1 && med(a.left) > 0;
+    if (a.dur.length) pts.push({ lv:+lv, load:a.load, dur:med(a.dur), rate });
+    html += `<tr class="${hot?'hot':cold?'cold':''}">
+      <td>${lv}</td><td>${a.load ?? ''}</td><td>${a.players.size}</td>
+      <td>${Math.round(rate*100)}%</td>
+      <td><div class="bar"><i style="width:${Math.round(rate*100)}%"></i></div></td>
+      <td>${tries ? tries.toFixed(1) : '-'}</td>
+      <td>${med(a.dur) || '-'}s</td><td>${med(a.left) || '-'}s</td>
+      <td>${avg(a.jams).toFixed(1)}</td>
+      <td>${a.fail.time||0}</td><td>${a.fail.bomb||0}</td><td>${a.fail.quit||0}</td>
+      <td>${a.b.scissors}</td><td>${a.b.wand}</td><td>${a.b.hammer}</td><td>${a.b.clock}</td>
+    </tr>`;
+  });
+  $('lvTable').innerHTML = html;
+
+  drawScatter(pts);
+
+  // ---- per player ----------------------------------------------------------
+  const pl = {};
+  for (const r of ROWS){
+    const a = pl[r.player] = pl[r.player] || { tries:0, wins:new Set(), dur:0, far:0, quit:0 };
+    a.tries++; a.dur += r.dur; a.far = Math.max(a.far, r.lv);
+    if (r.result === 'win') a.wins.add(r.lv);
+    if (r.result === 'quit') a.quit++;
+  }
+  let ph = `<tr><th>Oyuncu</th><th>Gecti</th><th>En uzak</th><th>Deneme</th>
+            <th>Birakma</th><th>Sure</th></tr>`;
+  Object.entries(pl).sort((a,b)=>b[1].wins.size-a[1].wins.size).forEach(([n,a]) => {
+    ph += `<tr><td>${n}</td><td>${a.wins.size}</td><td>${a.far}</td><td>${a.tries}</td>
+      <td>${a.quit}</td><td>${Math.round(a.dur/60)} dk</td></tr>`;
+  });
+  $('plTable').innerHTML = ph;
+}
+
+/* Predicted load on x, observed median completion time on y. If the formula
+   holds the points climb in a line; if they scatter, the model is wrong. */
+function drawScatter(pts){
+  const W=800, H=380, m={l:56,r:18,t:18,b:44};
+  if (pts.length < 2){ $('scatter').innerHTML =
+    `<text x="${W/2}" y="${H/2}" fill="#8fb2b3" font-size="15" text-anchor="middle">
+     Yeterli veri yok</text>`; $('corr').textContent=''; return; }
+  const xs = pts.map(p=>p.load), ys = pts.map(p=>p.dur);
+  const x0=0, x1=Math.max(...xs)*1.1, y0=0, y1=Math.max(...ys)*1.1;
+  const X = v => m.l + (v-x0)/(x1-x0)*(W-m.l-m.r);
+  const Y = v => H-m.b - (v-y0)/(y1-y0)*(H-m.t-m.b);
+
+  let g = `<rect width="${W}" height="${H}" fill="none"/>`;
+  for (let i=0;i<=4;i++){
+    const yy = y0+(y1-y0)*i/4, xx = x0+(x1-x0)*i/4;
+    g += `<line x1="${m.l}" y1="${Y(yy)}" x2="${W-m.r}" y2="${Y(yy)}" stroke="rgba(255,255,255,.08)"/>
+      <text x="${m.l-8}" y="${Y(yy)+4}" fill="#8fb2b3" font-size="11" text-anchor="end">${Math.round(yy)}s</text>
+      <text x="${X(xx)}" y="${H-m.b+18}" fill="#8fb2b3" font-size="11" text-anchor="middle">${Math.round(xx)}</text>`;
+  }
+  // least squares fit
+  const n=pts.length, sx=xs.reduce((a,b)=>a+b,0), sy=ys.reduce((a,b)=>a+b,0);
+  const sxy=pts.reduce((a,p)=>a+p.load*p.dur,0), sxx=pts.reduce((a,p)=>a+p.load*p.load,0);
+  const syy=pts.reduce((a,p)=>a+p.dur*p.dur,0);
+  const slope=(n*sxy-sx*sy)/(n*sxx-sx*sx||1), icpt=(sy-slope*sx)/n;
+  const r=(n*sxy-sx*sy)/(Math.sqrt(n*sxx-sx*sx)*Math.sqrt(n*syy-sy*sy)||1);
+  g += `<line x1="${X(x0)}" y1="${Y(icpt+slope*x0)}" x2="${X(x1)}" y2="${Y(icpt+slope*x1)}"
+        stroke="#f0a742" stroke-width="2" stroke-dasharray="6 5"/>`;
+  for (const p of pts){
+    g += `<circle cx="${X(p.load)}" cy="${Y(p.dur)}" r="7"
+      fill="${p.rate<.5?'#e8674c':'#5ed6bd'}" opacity=".9"/>
+      <text x="${X(p.load)}" y="${Y(p.dur)-11}" fill="#e8f2f1" font-size="10" text-anchor="middle">${p.lv}</text>`;
+  }
+  g += `<text x="${W/2}" y="${H-6}" fill="#8fb2b3" font-size="11" text-anchor="middle">olculen okuma yuku</text>`;
+  $('scatter').innerHTML = g;
+
+  const perLoad = slope ? (1/slope) : 0;
+  $('corr').innerHTML =
+    `Korelasyon <b>r = ${r.toFixed(2)}</b>. 0.8 uzeriyse formul tutuyor demektir. ` +
+    `Egim: her 1 birim yuk <b>${slope.toFixed(2)} saniye</b> demek, ` +
+    `yani oyuncular saniyede <b>${perLoad.toFixed(2)} parca</b> okuyor. ` +
+    `Tabloda varsayilan 1.4 idi &mdash; fark buyukse tum sureleri bu sayiyla yeniden hesaplariz.`;
+}
+
+$('csv').onclick = () => {
+  if (!ROWS.length) return;
+  const cols = Object.keys(ROWS[0]);
+  const csv = [cols.join(',')].concat(
+    ROWS.map(r => cols.map(c => JSON.stringify(r[c] ?? '')).join(','))).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = 'reverse-solver-playtest.csv'; a.click();
+};
+</script>
+</body>
+</html>
