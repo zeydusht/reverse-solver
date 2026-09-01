@@ -3,7 +3,7 @@
 Bir yapbozu **sökme** oyunu. Tahta yapboz karolarıyla dolu; her parçayı doğru
 yönde sürükleyip çıkararak tahtayı boşaltıyorsun.
 
-**Oyna:** https://KULLANICIADI.github.io/reverse-solver/
+**Oyna:** https://zeydusht.github.io/reverse-solver/
 
 Tek HTML dosyası. Derleme adımı, bağımlılık, dış istek yok. Telefonda anında açılır.
 
