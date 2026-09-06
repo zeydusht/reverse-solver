@@ -1,0 +1,32 @@
+{
+  "name": "Reverse Solver",
+  "short_name": "Reverse Solver",
+  "description": "Yapbozu sok. Her parcayi dogru yonde surukleyip tahtayi bosalt.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#d6dbe2",
+  "theme_color": "#0e2a2e",
+  "lang": "tr",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
